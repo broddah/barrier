@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Gate Simulator</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+
+  <!-- model-viewer (used as the 3D marker on the map) -->
+  <script type="module" src="https://unpkg.com/@google/model-viewer/dist/model-viewer.min.js"></script>
+
+  <!-- Leaflet local (Tracking Prevention safe) -->
+  <link rel="stylesheet" href="/vendor/leaflet/leaflet.css">
+  <script src="/vendor/leaflet/leaflet.js"></script>
+
+  <style>
+    :root{
+      --stroke: rgba(168,85,247,0.55);
+      --text:#f5f3ff;
+      --card:#120827;
+      --trainX:-120%;
+      --trainY:64%;
+      --shake:0;
+    }
+    *{ box-sizing:border-box; }
+    body{
+      margin:0; padding:20px;
+      font-family: Arial, sans-serif;
+      color:var(--text);
+      background:#07030f;
+      overflow-x:hidden;
+    }
+    .card{
+      max-width: 1200px;
+      margin: 20px auto;
+      padding: 22px;
+      border-radius: 18px;
+      border: 1px solid var(--stroke);
+      background: var(--card);
+      box-shadow: 0 0 34px rgba(168,85,247,0.25);
+    }
+    h1{ text-align:center; margin:0 0 12px 0; }
+
+    .gridTop{
+      display:grid;
+      grid-template-columns: 1.4fr 0.6fr;
+      gap:16px;
+      margin-bottom: 14px;
+    }
+    .panel{
+      border-radius: 16px;
+      border: 1px solid rgba(168,85,247,0.28);
+      background: rgba(10, 6, 24, 0.55);
+      padding: 14px;
+      position:relative;
+      overflow:hidden;
+      min-height: 520px;
+    }
+    .panel.purple{
+      border:1px solid rgba(168,85,247,0.55);
+      background: rgba(8, 4, 18, 0.92);
+      min-height: 520px;
+    }
+
+    #map{
+      width: 100%;
+      height: 520px;
+      border-radius: 14px;
+      border: 1px solid rgba(168,85,247,0.25);
+      overflow:hidden;
+    }
+    .btnRow{
+      display:flex;
+      gap:10px;
+      flex-wrap:wrap;
+      justify-content:center;
+      margin-top: 10px;
+    }
+    button{
+      padding:10px 14px;
+      border-radius:12px;
+      border:1px solid rgba(168,85,247,0.35);
+      background: rgba(15,8,30,0.7);
+      color: var(--text);
+      cursor:pointer;
+    }
+    button:disabled{ opacity:0.5; cursor:not-allowed; }
+
+    .info{ text-align:center; opacity:0.92; font-size:0.95rem; line-height:1.35; margin-top: 8px; white-space: pre-wrap; }
+    .err{ color:#ffb4b4; text-align:center; margin-top:10px; white-space:pre-wrap; }
+
+    .neonTrain{
+      position: fixed;
+      left:0; right:0;
+      top: var(--trainY);
+      height: 140px;
+      z-index: -3;
+      opacity:0.10;
+      pointer-events:none;
+      transform: translate3d(var(--trainX), -50%, 0) perspective(900px) rotateY(-12deg) rotateX(8deg) skewX(-10deg) scale(1.06);
+      transition: opacity 0.35s ease;
+    }
+    body.trainVisible .neonTrain{ opacity:0.40; }
+    .neonTrain .car{
+      position:absolute; left:0; right:0; top:18px; bottom:20px;
+      border-radius: 20px;
+      background: linear-gradient(90deg, rgba(236,72,153,0.62), rgba(168,85,247,0.92), rgba(124,58,237,0.62));
+    }
+    .neonTrain .windows{
+      position:absolute; left:26px; right:26px; top:42px; height:26px;
+      border-radius: 14px;
+      background: repeating-linear-gradient(90deg, rgba(255,255,255,0.92) 0 12px, rgba(255,255,255,0.22) 12px 22px);
+      opacity:0.50;
+    }
+
+    @keyframes wobble {
+      0%   { transform: translate3d(0,0,0) rotateZ(0deg) rotateY(0deg); }
+      20%  { transform: translate3d(0,0,0) rotateZ(calc(var(--shake) * 1deg)) rotateY(calc(var(--shake) * 0.8deg)); }
+      50%  { transform: translate3d(0,0,0) rotateZ(calc(var(--shake) * -1deg)) rotateY(calc(var(--shake) * -0.9deg)); }
+      80%  { transform: translate3d(0,0,0) rotateZ(calc(var(--shake) * 0.8deg)) rotateY(calc(var(--shake) * 0.6deg)); }
+      100% { transform: translate3d(0,0,0) rotateZ(0deg) rotateY(0deg); }
+    }
+
+    .row{ display:flex; gap:14px; align-items:stretch; }
+    .tube{
+      width:68px; border-radius:999px;
+      border:1px solid rgba(168,85,247,0.55);
+      background: rgba(0,0,0,0.35);
+      position:relative; overflow:hidden;
+    }
+    .fill{ position:absolute; left:0; right:0; bottom:0; height:0%; transition: height 0.45s linear; }
+    .fill.filling{ background: linear-gradient(180deg, rgba(236,72,153,0.98), rgba(168,85,247,0.92), rgba(124,58,237,0.92)); }
+    .fill.draining{ background: linear-gradient(180deg, rgba(59,26,111,0.98), rgba(42,15,79,0.92), rgba(23,8,44,0.92)); }
+
+    .box{
+      flex:1;
+      border-radius:14px;
+      border:1px solid rgba(168,85,247,0.28);
+      background: rgba(12, 6, 26, 0.55);
+      padding:12px;
+      overflow:auto;
+    }
+    .percent{ font-size: 2.6rem; font-weight: 950; margin-bottom: 4px; }
+    .mono{ font-family: ui-monospace, Menlo, Consolas, monospace; }
+    .small{ font-size:0.92rem; opacity:0.92; white-space:pre-wrap; }
+
+    /* 3D figure marker (replaces the dot) */
+    .figurePin{
+      width: 56px;
+      height: 56px;
+      position: relative;
+      transform-origin: 50% 80%;
+      animation: wobble 0.22s linear infinite;
+    }
+    .figurePin model-viewer{
+      width: 56px;
+      height: 56px;
+      background: transparent;
+      --poster-color: transparent;
+      pointer-events: none;
+    }
+    .figurePin::after{
+      content:"";
+      position:absolute;
+      left:50%;
+      top:50%;
+      width: 56px;
+      height: 56px;
+      transform: translate(-50%,-50%);
+      border-radius: 999px;
+      box-shadow: 0 0 0 3px rgba(168,85,247,0.30), 0 0 18px rgba(236,72,153,0.20);
+      pointer-events:none;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="neonTrain" aria-hidden="true">
+    <div class="car"></div><div class="windows"></div>
+  </div>
+
+  <div class="card">
+    <h1>Gate Simulator</h1>
+
+    <div class="gridTop">
+      <div class="panel">
+        <div id="map"></div>
+        <div class="btnRow">
+          <button id="locBtn">Find my location</button>
+          <button id="connectBtn" disabled>Connect (marker)</button>
+          <button id="refreshBtn" disabled>Recalculate now</button>
+        </div>
+        <div class="info" id="mapInfo">No location yet. Click “Find my location”.</div>
+        <div class="err" id="errText"></div>
+      </div>
+
+      <div class="panel purple">
+        <div class="percent"><span id="meterPct">–</span>%</div>
+        <div class="small" id="statusText">Not connected.</div>
+
+        <div class="row" style="margin-top:12px;">
+          <div class="tube"><div class="fill filling" id="meterFill"></div></div>
+          <div class="box">
+            <div class="small"><b>Upcoming closure windows</b></div>
+            <div class="small mono" id="intervalBox">—</div>
+            <hr style="border:0;border-top:1px solid rgba(168,85,247,0.25);margin:10px 0;">
+            <div class="small"><b>Stations</b></div>
+            <div class="small" id="stationsBox">—</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+  const locBtn = document.getElementById("locBtn");
+  const connectBtn = document.getElementById("connectBtn");
+  const refreshBtn = document.getElementById("refreshBtn");
+  const mapInfo = document.getElementById("mapInfo");
+  const errText = document.getElementById("errText");
+  const stationsBox = document.getElementById("stationsBox");
+  const intervalBox = document.getElementById("intervalBox");
+  const statusText = document.getElementById("statusText");
+  const meterFill = document.getElementById("meterFill");
+  const meterPct = document.getElementById("meterPct");
+
+  function clamp01(x){ return Math.max(0, Math.min(1, x)); }
+  function setTrainProgress(pct){
+    const t = clamp01(pct / 100);
+    document.documentElement.style.setProperty("--trainX", (-120 + 240*t).toFixed(2) + "%");
+  }
+  function setShakeFromPct(pct){
+    const t = clamp01(pct / 100);
+    const eased = t * t * (3 - 2 * t);
+    document.documentElement.style.setProperty("--shake", (6.0*eased).toFixed(2));
+  }
+
+  async function postJson(url, payload){
+    const r = await fetch(url, {
+      method:"POST",
+      headers:{ "content-type":"application/json" },
+      body: JSON.stringify(payload)
+    });
+    const raw = await r.text();
+    let data = null;
+    try { data = JSON.parse(raw); } catch {}
+    if (!r.ok) {
+      const msg = (data && (data.error || data.message)) ? (data.error || data.message) : `HTTP ${r.status}`;
+      throw new Error(msg + "\n\n" + raw.slice(0, 1600));
+    }
+    if (!data) throw new Error("No JSON:\n" + raw.slice(0, 1600));
+    return data;
+  }
+
+  function fmtTime(ts){
+    return new Date(ts).toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit",second:"2-digit"});
+  }
+  function fmtMinSec(ms){
+    const s = Math.max(0, Math.round(ms/1000));
+    const m = Math.floor(s/60);
+    const r = s%60;
+    return m>0 ? `${m}m ${r}s` : `${r}s`;
+  }
+
+  let closedIntervals = [];
+  let hasInitialData = false;
+  let lastMarkerLatLng = null;
+  let refreshTimer = null;
+
+  function getActiveClosed(now){
+    return closedIntervals.find(iv => iv[0] <= now && iv[1] >= now) || null;
+  }
+  function getNextClosed(now){
+    return closedIntervals.find(iv => iv[0] > now) || null;
+  }
+  function getPrevClosed(now){
+    for (let i = closedIntervals.length - 1; i >= 0; i--) {
+      if (closedIntervals[i][1] <= now) return closedIntervals[i];
+    }
+    return null;
+  }
+
+  function updateDisplay(){
+    if (!hasInitialData) {
+      meterPct.textContent = "–";
+      meterFill.style.height = "0%";
+      document.body.classList.remove("trainVisible");
+      setTrainProgress(0); setShakeFromPct(0);
+      return;
+    }
+
+    const now = Date.now();
+    const active = getActiveClosed(now);
+    const next = getNextClosed(now);
+    const prev = getPrevClosed(now);
+
+    if (active) {
+      const [start, end] = active;
+      document.body.classList.add("trainVisible");
+      meterFill.classList.add("filling");
+      meterFill.classList.remove("draining");
+
+      const v = clamp01((now - start) / Math.max(1, end - start));
+      const pct = Math.round(v*100);
+
+      meterPct.textContent = String(pct);
+      meterFill.style.height = pct + "%";
+      setShakeFromPct(pct);
+      setTrainProgress(pct);
+
+      statusText.textContent = `Status: CLOSED\nOpens in: ${fmtMinSec(end-now)} (${fmtTime(end)})`;
+      return;
+    }
+
+    document.body.classList.remove("trainVisible");
+    meterFill.classList.add("draining");
+    meterFill.classList.remove("filling");
+    setTrainProgress(0);
+
+    if (!next) {
+      meterPct.textContent = "100";
+      meterFill.style.height = "100%";
+      setShakeFromPct(100);
+      statusText.textContent = "Status: OPEN\nNo closures in the next 60 minutes.";
+      return;
+    }
+
+    const openStart = prev ? prev[1] : now;
+    const openEnd = next[0];
+    const total = Math.max(1, openEnd - openStart);
+    const remaining = openEnd - now;
+
+    const v = clamp01(remaining / total);
+    const pct = Math.round(v*100);
+
+    meterPct.textContent = String(pct);
+    meterFill.style.height = pct + "%";
+    setShakeFromPct(pct);
+
+    statusText.textContent = `Status: OPEN\nCloses in: ${fmtMinSec(openEnd-now)} (${fmtTime(openEnd)})`;
+  }
+  setInterval(updateDisplay, 250);
+
+  function renderIntervals(){
+    intervalBox.textContent =
+      closedIntervals.slice(0,10).map(iv => `⛔ ${fmtTime(iv[0])} – ${fmtTime(iv[1])}`).join("\n")
+      || "— (no windows in range)";
+  }
+  function renderStations(sts){
+    stationsBox.innerHTML = (sts||[]).map(s => {
+      const km = (s.alongTrackM/1000).toFixed(2);
+      const sec = Math.round(s.travelMs/1000);
+      return `• ${s.name}<br><span class="mono">Dist: ${km} km · t@60: ${sec}s · ${s.resolveHow}</span>`;
+    }).join("<br><br>") || "—";
+  }
+
+  // Map
+  const map = L.map("map").setView([50.1109, 8.6821], 13);
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 19,
+    attribution: "&copy; OpenStreetMap"
+  }).addTo(map);
+
+  // 3D figure marker icon
+  const figureIcon = L.divIcon({
+    className: "",
+    html: `
+      <div class="figurePin">
+        <model-viewer
+          src="bra.glb"
+          camera-controls
+          auto-rotate
+          rotation-per-second="20deg"
+          exposure="1.05"
+          shadow-intensity="0.8"
+          alt="3D Figure"
+          interaction-prompt="none">
+        </model-viewer>
+      </div>
+    `,
+    iconSize: [56, 56],
+    iconAnchor: [28, 44]
+  });
+
+  const marker = L.marker([50.1109, 8.6821], { draggable:true, icon: figureIcon }).addTo(map);
+
+  function setMarker(lat, lon, zoom=18){
+    marker.setLatLng([lat, lon]);
+    map.setView([lat, lon], zoom);
+    lastMarkerLatLng = { lat, lon };
+    connectBtn.disabled = false;
+    refreshBtn.disabled = true;
+    mapInfo.textContent = `Marker: ${lat.toFixed(6)}, ${lon.toFixed(6)}\nDrag it onto the gate and press “Connect”.`;
+  }
+  marker.on("drag", () => {
+    const p = marker.getLatLng();
+    setMarker(p.lat, p.lng, map.getZoom());
+  });
+
+  async function getLocationOnce(){
+    return await new Promise((resolve, reject) => {
+      navigator.geolocation.getCurrentPosition(resolve, reject, {
+        enableHighAccuracy: true,
+        timeout: 10000,
+        maximumAge: 15000
+      });
+    });
+  }
+
+  locBtn.addEventListener("click", async () => {
+    errText.textContent = "";
+    try {
+      const pos = await getLocationOnce();
+      setMarker(pos.coords.latitude, pos.coords.longitude, 18);
+    } catch (e) {
+      errText.textContent = "Location error:\n" + (e?.message || String(e));
+    }
+  });
+
+  async function connectUsingMarker(){
+    errText.textContent = "";
+    mapInfo.textContent = "Connecting…";
+    const data = await postJson("/api/connect", { lat:lastMarkerLatLng.lat, lon:lastMarkerLatLng.lon });
+
+    closedIntervals = data.closedIntervals || [];
+    hasInitialData = true;
+
+    const gateName = data.crossing?.tags?.name ? ` (${data.crossing.tags.name})` : "";
+    mapInfo.textContent =
+      `Mode: ${data.mode}\n` +
+      `Gate${gateName}\n` +
+      `Marker → Gate: ${data.crossing?.distM ?? "—"} m\n` +
+      `Rail way: ${data.railWay?.wayId ?? "—"} · Distance to track: ${data.railWay?.crossingDistToWayM ?? "—"} m`;
+
+    renderIntervals();
+    renderStations(data.stations);
+
+    refreshBtn.disabled = false;
+    updateDisplay();
+
+    if (refreshTimer) clearInterval(refreshTimer);
+    refreshTimer = setInterval(async () => {
+      try { await connectUsingMarker(); } catch {}
+    }, 25_000);
+  }
+
+  connectBtn.addEventListener("click", async () => {
+    try { await connectUsingMarker(); }
+    catch (e) { errText.textContent = "Connect error:\n" + (e?.message || String(e)); }
+  });
+
+  refreshBtn.addEventListener("click", async () => {
+    try { await connectUsingMarker(); }
+    catch (e) { errText.textContent = "Refresh error:\n" + (e?.message || String(e)); }
+  });
+
+  setMarker(50.1109, 8.6821, 13);
+</script>
+</body>
+</html>
